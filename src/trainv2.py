@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import random
 import numpy as np
@@ -13,6 +14,8 @@ from torchvision.utils import make_grid
 from torch.utils.data import random_split
 from torch.utils.data.dataloader import DataLoader
 import matplotlib.pyplot as plt
+
+from fhe import plot_vlib_quantized_result
 
 
 def accuracy(outputs, labels):
@@ -119,7 +122,7 @@ class Model(ImageClassificationBase):
     def toggle_pruning(self, enable):
         """Enables or removes pruning."""
         # Maximum number of active neurons (i.e. corresponding weight != 0)
-        n_active = 10
+        n_active = 30
 
         # Go through all the convolution layers
         for layer in [self.hidden1, self.hidden2, self.hidden3]:
@@ -171,7 +174,7 @@ def plot_losses(history):
     plt.show()
 
 
-if __name__ == "__main__":
+def main():
     data_dir = '../datasets/medical-mnist'
     classes = os.listdir(data_dir)
 
@@ -199,9 +202,9 @@ if __name__ == "__main__":
     print(f"train dataset length: {len(train_ds)}, validation dataset length: {len(val_ds)}, test dataset length: {len(test_ds)}")
 
     batch_size = 64
-    train_loader = DataLoader(train_ds, batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size*2, num_workers=4, pin_memory=True)
-    test_loader = DataLoader(test_ds, batch_size*2, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size, shuffle=True, num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size*2, num_workers=0, pin_memory=True)
+    test_loader = DataLoader(test_ds, batch_size*2, num_workers=0, pin_memory=True)
 
     print(f"CUDA available: {torch.cuda.is_available()}")
     device = get_default_device()
@@ -220,7 +223,7 @@ if __name__ == "__main__":
     history = [evaluate(model, val_loader)]
     print(f"history (validation dataset): {history}")
 
-    history += fit(7, 0.01, model, train_loader, val_loader)
+    history += fit(30, 0.01, model, train_loader, val_loader)
     history += fit(8, 0.001, model, train_loader, val_loader)
     history += fit(3, 0.0001, model, train_loader, val_loader)
 
@@ -230,4 +233,17 @@ if __name__ == "__main__":
     plot_accuracies(history)
     plot_losses(history)
 
-    evaluate(model, test_loader)
+    history = [evaluate(model, test_loader)]
+
+    plot_accuracies(history)
+    plot_losses(history)
+
+    model.toggle_pruning(False)
+
+    plot_vlib_quantized_result(model, train_loader, test_loader)
+
+
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    main()

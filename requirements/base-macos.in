@@ -1,0 +1,8 @@
+concrete-numpy
+gradio
+medmnist # used dataset
+onnx
+scipy
+numpy
+torch
+torchvision
