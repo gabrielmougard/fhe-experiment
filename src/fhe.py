@@ -81,7 +81,7 @@ def plot_vlib_quantized_result(model, train_loader, test_dataloader):
         # Compile and test the network with the Virtual Lib on the whole test set
         q_module_vl = compile_torch_model(
             model,
-            torch.cat([img for img, _ in train_loader],0),
+            torch.cat([img for img, _ in train_loader],0), # concatenate the whole training set into one tensor as Tensor tuple is not yet supported
             n_bits=n_bits,
             use_virtual_lib=True,
             compilation_configuration=cfg_simu,
