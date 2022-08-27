@@ -39,7 +39,7 @@ def get_equivalent_numpy_forward_and_onnx_model(
         else output_onnx_file
     )
 
-    torch.onnx.export(torch_module, dummy_input[0][None, :], str(output_onnx_file_path), opset_version=14)
+    torch.onnx.export(torch_module, dummy_input, str(output_onnx_file_path), opset_version=14)
     equivalent_onnx_model = onnx.load_model(output_onnx_file_path)
     checker.check_model(equivalent_onnx_model)
 
