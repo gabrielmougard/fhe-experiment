@@ -2,3 +2,6 @@
 .vscode
 
 datasets
+checkpoints
+
+__pycache__/
