@@ -188,10 +188,10 @@ def test_with_concrete_virtual_lib(quantized_module, test_loader, use_fhe, use_v
     )
         
 
-if __name__ == "__main__":
+def get_compiled_circuit_with_test_data():
     torch.manual_seed(12538040293833290220)
 
-    BATCH_SIZE=64
+    BATCH_SIZE = 64
     N_EPOCHS = 30
     data_dir = '../datasets/medical-mnist'
     models_dir = '../checkpoints'
@@ -264,25 +264,39 @@ if __name__ == "__main__":
         use_insecure_key_cache=False,
     )
 
-    fhe_cfg_prod = CompilationConfiguration(
-        dump_artifacts_on_unexpected_failures=False,
-        treat_warnings_as_errors=True,
-        use_insecure_key_cache=False,
-    )
+    # fhe_cfg_prod = CompilationConfiguration(
+    #     dump_artifacts_on_unexpected_failures=False,
+    #     treat_warnings_as_errors=True,
+    #     use_insecure_key_cache=False,
+    # )
 
-    start_time = time.time()
+    start_time = time.time() 
     print(f"Compiling to FHE representation...")
-    q_module_vl = compile_torch_model(
-        model.to("cpu"),
-        torch.cat([img.to("cpu") for img, _ in train_loader],0)[0:20000], # concatenate a part of the training set into one tensor as Tensor tuple is not yet supported.
-        n_bits=8,
-        use_virtual_lib=True,
-        compilation_configuration=fhe_cfg_simu,
-    )
+    for n_bit in range(8, 1, -1):
+        try:
+            print(f"Attempting to compile with {n_bit} precision...")
+            q_module_vl = compile_torch_model(
+                model.to("cpu"),
+                torch.cat([img.to("cpu") for img, _ in train_loader],0)[0:200], # concatenate a part of the training set into one tensor as Tensor tuple is not yet supported.
+                n_bits=n_bit,
+                use_virtual_lib=True,
+                compilation_configuration=fhe_cfg_simu,
+            )
+            print(f"Compiled FHE friendly torch model for {n_bit} quantization bits in {time.time() - start_time} seconds") # ~20min : AMD Ryzen Threadripper 2920X - 12 cores, 24 threads + 32 Gb RAM 
+            break
+        except RuntimeError as e:
+            if str(e).startswith("max_bit_width of some nodes is too high"):
+                print("The network is not fully FHE friendly, retraining.")
+                continue
+            raise e
+
+
+    path = q_module_vl.forward_fhe.draw()
+    print(f"FHECircuit graph generated at {path}")
+    
     # FHE module serialization is not supported yet.
     # Although I tried to make it work, I'm facing serialization issues
     # with internal tricky JIT compiler logic. Better wait for an official support.
-    print(f"Compiled torch model for 8 quantization bits in {time.time() - start_time} seconds") # ~20min : AMD Ryzen Threadripper 2920X - 12 cores, 24 threads + 32 Gb RAM 
 
     test_with_concrete_virtual_lib(
         q_module_vl,
@@ -291,5 +305,4 @@ if __name__ == "__main__":
         use_vl=True,
     ) # We achieve 98% accuracy on the test dataset which is only a drop of 1.2% from the original model.
 
-    ### TODO: FHE keygen
-    ### TODO : gradio app 
+    return q_module_vl, test_loader
