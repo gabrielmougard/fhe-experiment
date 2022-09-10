@@ -1,28 +1,20 @@
-<!--
- Copyright 2022 gab
- 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
- 
-     http://www.apache.org/licenses/LICENSE-2.0
- 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
--->
-
 # Fully Homomorphic Encryption experiments
 
-## TODO for GC meetup:
 
-* Benchmark medical MNIST v1 classification with `concrete`'s Quantized Module for different accumulators bit width
-* Come up with an prod model (optimal bit accumulator width) to compile the `FHECircuit`
-* Build the `gradio` app:
-    * UI
-    * context `concrete` key generation
-    * FHE inference pipeline with `encrypt` ==> inference ==> `decrypt`
+## Instruction to run the demo
 
-* Build a nice powerpoint :) 
+* Download the kaggle CLI (https://github.com/Kaggle/kaggle-api)
+* Execute the following:
+
+```
+git clone https://github.com/gabrielmougard/fhe-experiment.git
+
+cd fhe-experiment && \
+    mkdir -p datasets/medical-mnist && \
+    kaggle datasets download -p datasets/medical-mnist andrewmvd/medical-mnist && \
+    cd datasets/medical-mnist && unzip medical-mnist.zip && rm medical-mnist.zip && cd ../.. && \
+    python3 -m venv .env && \
+    source .env/bin/activate && \
+    pip install -r base-linux.txt && \
+    cd src && ./demo.py 
+```
