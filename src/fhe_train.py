@@ -196,8 +196,11 @@ def generate_demo_data(test_loader, q_module_vl):
     """
     Generate example data for the gradio UI (the first batch of the test set)
     """
-    for file in os.listdir("ui_examples"):
-        os.remove(f"ui_examples/{file}")
+    UI_EXAMPLES_FOLDER = "ui_examples"
+    if not os.path.exists(UI_EXAMPLES_FOLDER):
+        os.mkdir(UI_EXAMPLES_FOLDER)
+    for file in os.listdir(UI_EXAMPLES_FOLDER):
+        os.remove(f"{UI_EXAMPLES_FOLDER}/{file}")
 
     saved_example = {}
     saved_quantized_data = {}
@@ -208,13 +211,13 @@ def generate_demo_data(test_loader, q_module_vl):
         # Iterate over single inputs
         for i in range(data.shape[0]):
             filename = f"example_{LABELS_MAP[target[i].item()]}_{i}.png"                
-            save_image(torch.from_numpy(data[i]), f"ui_examples/{filename}")
+            save_image(torch.from_numpy(data[i]), f"{UI_EXAMPLES_FOLDER}/{filename}")
             x_q = np.expand_dims(x_test_q[i, :], 0)
             saved_quantized_data[filename] = x_q
             saved_example[filename] = target[i]
         break
 
-    np.save("ui_examples/quantized_data.npy", saved_quantized_data)
+    np.save(f"{UI_EXAMPLES_FOLDER}/quantized_data.npy", saved_quantized_data)
     return saved_example
 
 
