@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import pickle
 import time
 from tqdm import tqdm
 
@@ -23,6 +24,7 @@ import torch.utils
 from torch.utils.data import random_split
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
+from torchvision.utils import save_image
 from torch import nn
 from torch.nn.utils import prune
 from torch.utils.data import DataLoader
@@ -31,6 +33,7 @@ from torchsummary import summary
 from concrete.common.compilation import CompilationConfiguration
 from concreteml.torch.compile import compile_torch_model
 
+LABELS_MAP = {0: "Abdomen", 1: "Breast", 2: "Chest X-Ray", 3: "Chest computed tomography", 4: "Hand", 5: "Head"}
 
 class TinyCNN(nn.Module):
     """A very small CNN to classify the medmsnist v1 dataset.
@@ -170,6 +173,7 @@ def test_with_concrete_virtual_lib(quantized_module, test_loader, use_fhe, use_v
 
             # Take the predicted class from the outputs and store it
             y_pred = np.argmax(output, 1)
+            print(f"y_pred: {y_pred[0]} == {target[i].numpy()}")
             if y_pred[0] == target[i].numpy():
                 correct += 1
 
@@ -188,8 +192,33 @@ def test_with_concrete_virtual_lib(quantized_module, test_loader, use_fhe, use_v
     )
         
 
+def generate_demo_data(test_loader, q_module_vl):
+    """
+    Generate example data for the gradio UI (the first batch of the test set)
+    """
+    for file in os.listdir("ui_examples"):
+        os.remove(f"ui_examples/{file}")
+
+    saved_example = {}
+    saved_quantized_data = {}
+    for data, target in test_loader:
+        data = data.numpy()
+        x_test_q = q_module_vl.quantize_input(data).astype(np.int32)
+
+        # Iterate over single inputs
+        for i in range(data.shape[0]):
+            filename = f"example_{LABELS_MAP[target[i].item()]}_{i}.png"                
+            save_image(torch.from_numpy(data[i]), f"ui_examples/{filename}")
+            x_q = np.expand_dims(x_test_q[i, :], 0)
+            saved_quantized_data[filename] = x_q
+            saved_example[filename] = target[i]
+        break
+
+    np.save("ui_examples/quantized_data.npy", saved_quantized_data)
+    return saved_example
+
+
 def get_compiled_circuit_with_test_data():
-    torch.manual_seed(12538040293833290220)
 
     BATCH_SIZE = 64
     N_EPOCHS = 30
@@ -297,12 +326,13 @@ def get_compiled_circuit_with_test_data():
     # FHE module serialization is not supported yet.
     # Although I tried to make it work, I'm facing serialization issues
     # with internal tricky JIT compiler logic. Better wait for an official support.
+    # test_with_concrete_virtual_lib(
+    #     q_module_vl,
+    #     test_loader,
+    #     use_fhe=False,
+    #     use_vl=True,
+    # ) # We achieve 98% accuracy on the test dataset which is only a drop of 1.2% from the original model.
 
-    test_with_concrete_virtual_lib(
-        q_module_vl,
-        test_loader,
-        use_fhe=False,
-        use_vl=True,
-    ) # We achieve 98% accuracy on the test dataset which is only a drop of 1.2% from the original model.
+    saved_examples = generate_demo_data(test_loader, q_module_vl)
 
-    return q_module_vl, test_loader
+    return q_module_vl, saved_examples
