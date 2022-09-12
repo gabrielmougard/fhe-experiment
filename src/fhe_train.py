@@ -196,7 +196,7 @@ def generate_demo_data(test_loader, q_module_vl):
     """
     Generate example data for the gradio UI (the first batch of the test set)
     """
-    UI_EXAMPLES_FOLDER = "ui_examples"
+    UI_EXAMPLES_FOLDER = "src/ui_examples"
     if not os.path.exists(UI_EXAMPLES_FOLDER):
         os.mkdir(UI_EXAMPLES_FOLDER)
     for file in os.listdir(UI_EXAMPLES_FOLDER):

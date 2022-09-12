@@ -12,7 +12,7 @@ from fhe_train import get_compiled_circuit_with_test_data, LABELS_MAP
 
 def main():
     fhe_model, examples_map = get_compiled_circuit_with_test_data()
-    quantized_examples_data = np.load("ui_examples/quantized_data.npy", allow_pickle=True)
+    quantized_examples_data = np.load("src/ui_examples/quantized_data.npy", allow_pickle=True)
 
     def fhe_encrypt(clear_input):
         """
