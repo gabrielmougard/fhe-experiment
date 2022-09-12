@@ -225,8 +225,8 @@ def get_compiled_circuit_with_test_data():
 
     BATCH_SIZE = 64
     N_EPOCHS = 30
-    data_dir = '../datasets/medical-mnist'
-    models_dir = '../checkpoints'
+    data_dir = 'datasets/medical-mnist'
+    models_dir = 'checkpoints'
 
     transform=transforms.Compose([
         transforms.Grayscale(num_output_channels=1), # Convert image to grayscale (allow less complex model and faster FHE compilation)
