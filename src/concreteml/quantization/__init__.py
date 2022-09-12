@@ -1,16 +1,44 @@
 """Modules for quantization."""
-from .post_training import PostTrainingAffineQuantization
+from .base_quantized_op import QuantizedOp
+from .post_training import PostTrainingAffineQuantization, PostTrainingQATImporter
 from .quantized_array import QuantizedArray
 from .quantized_module import QuantizedModule
 from .quantized_ops import (
+    QuantizedAbs,
+    QuantizedAdd,
+    QuantizedAvgPool,
+    QuantizedBatchNormalization,
+    QuantizedCelu,
     QuantizedClip,
     QuantizedConv,
+    QuantizedDiv,
+    QuantizedElu,
+    QuantizedErf,
     QuantizedExp,
     QuantizedGemm,
-    QuantizedLinear,
-    QuantizedOp,
+    QuantizedGreater,
+    QuantizedGreaterOrEqual,
+    QuantizedHardSigmoid,
+    QuantizedHardSwish,
+    QuantizedIdentity,
+    QuantizedLeakyRelu,
+    QuantizedLess,
+    QuantizedLessOrEqual,
+    QuantizedLog,
+    QuantizedMatMul,
+    QuantizedMul,
+    QuantizedOr,
+    QuantizedPad,
+    QuantizedPow,
+    QuantizedPRelu,
+    QuantizedReduceSum,
     QuantizedRelu,
     QuantizedReshape,
+    QuantizedRound,
+    QuantizedSelu,
     QuantizedSigmoid,
+    QuantizedSoftplus,
+    QuantizedSub,
     QuantizedTanh,
+    QuantizedWhere,
 )

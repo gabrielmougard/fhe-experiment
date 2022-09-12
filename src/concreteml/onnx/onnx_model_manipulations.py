@@ -122,21 +122,35 @@ def replace_uncessary_nodes_by_identity(onnx_model: onnx.ModelProto, op_type_to_
     """
 
     op_type_inputs = {}
+    op_type_inputs["input_0"] = "Input"
+
+    # Reference initializer as Constant
+    for initializer in onnx_model.graph.initializer:
+        op_type_inputs[initializer.name] = "Constant"
+
     # Replace not needed ops by Identity
     for node_index, node in enumerate(onnx_model.graph.node):
         # Save op_type for each node
         for output in node.output:
             op_type_inputs[output] = node.op_type
         if node.op_type in op_type_to_replace:
+
+            # Find the non-constant input
+            non_constant_input = None
+            for input_ in node.input:
+                if op_type_inputs[input_] != "Constant":
+                    non_constant_input = input_
+                    break
+
             # Check that node.input[0] is not a constant
-            if node.input[0] != "input_0" and op_type_inputs[node.input[0]] == "Constant":
+            if non_constant_input is None:
                 raise ValueError(
                     f"Trying to apply identity over a constant input." f"Node: {node.op_type}"
                 )  # pragma: no cover
             # Create a Identity node
             new_node = onnx.helper.make_node(
                 "Identity",
-                inputs=[str(node.input[0])],
+                inputs=[str(non_constant_input)],
                 outputs=node.output,
             )
             # Update current node with new_node
@@ -174,27 +188,35 @@ def cut_onnx_graph_after_node_name(onnx_model: onnx.ModelProto, node_name: str) 
     return output_to_follow
 
 
-def remove_transpose_in_first_gemm_node(onnx_model):
-    """Find the first Gemm node and remove the transpose option.
-
-    FIXME remove this function once #292 is fixed
+def clean_graph_after_sigmoid(onnx_model: onnx.ModelProto):
+    """Clean the graph of the onnx model, by removing nodes after the sigmoid.
 
     Args:
-        onnx_model (onnx.ModelProto): the ONNX model to modify.
-    """
-    # Find the Gemm node
-    for node_index, node in enumerate(onnx_model.graph.node):
-        if node.op_type == "Gemm":
-            gemm_node_index = node_index
-            break
+        onnx_model (onnx.ModelProto): the onnx model
 
-    gemm_node = onnx_model.graph.node[gemm_node_index]
-    new_node = onnx.numpy_helper.helper.make_node(
-        name=gemm_node.name,
-        op_type=gemm_node.op_type,
-        inputs=gemm_node.input,
-        outputs=gemm_node.output,
-        alpha=1.0,
-        beta=0.0,
-    )
-    onnx_model.graph.node[gemm_node_index].CopyFrom(new_node)
+    Returns:
+        onnx.ModelProto: the cleaned onnx model
+    """
+    nodes_to_remove = []
+    output_to_follow = "variable"
+    # Find nodes to remove (after the sigmoid)
+    sigmoid_reached = False
+    for node in onnx_model.graph.node:
+        if sigmoid_reached:
+            nodes_to_remove.append(node)
+        if node.op_type == "Sigmoid":
+            sigmoid_reached = True
+            # Create output node
+
+            onnx_model.graph.output[0].CopyFrom(
+                onnx.helper.make_tensor_value_info(node.output[0], onnx.TensorProto.FLOAT, [2])
+            )
+            output_to_follow = node.output[0]
+
+    if sigmoid_reached:
+        # Remove nodes
+        for node in nodes_to_remove:
+            onnx_model.graph.node.remove(node)
+
+    keep_following_outputs_discard_others(onnx_model, [output_to_follow])
+    return onnx_model

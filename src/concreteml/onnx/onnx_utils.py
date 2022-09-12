@@ -37,6 +37,8 @@ from .ops_impl import (
     numpy_asinh,
     numpy_atan,
     numpy_atanh,
+    numpy_batchnorm,
+    numpy_cast,
     numpy_celu,
     numpy_clip,
     numpy_constant,
@@ -47,18 +49,34 @@ from .ops_impl import (
     numpy_equal,
     numpy_erf,
     numpy_exp,
+    numpy_flatten,
     numpy_gemm,
     numpy_greater,
+    numpy_greater_float,
+    numpy_greater_or_equal,
+    numpy_greater_or_equal_float,
     numpy_hardsigmoid,
+    numpy_hardswish,
     numpy_identity,
     numpy_leakyrelu,
     numpy_less,
+    numpy_less_float,
+    numpy_less_or_equal,
+    numpy_less_or_equal_float,
     numpy_log,
     numpy_matmul,
     numpy_mul,
     numpy_not,
+    numpy_not_float,
+    numpy_or,
+    numpy_or_float,
+    numpy_pad,
+    numpy_pow,
+    numpy_prelu,
+    numpy_reduce_sum,
     numpy_relu,
     numpy_reshape,
+    numpy_round,
     numpy_selu,
     numpy_sigmoid,
     numpy_sin,
@@ -68,6 +86,9 @@ from .ops_impl import (
     numpy_tan,
     numpy_tanh,
     numpy_thresholdedrelu,
+    numpy_transpose,
+    numpy_where,
+    torch_avgpool,
     torch_conv,
 )
 
@@ -75,7 +96,7 @@ ATTR_TYPES = dict(onnx.AttributeProto.AttributeType.items())
 ATTR_GETTERS = {
     ATTR_TYPES["FLOAT"]: lambda attr: attr.f,
     ATTR_TYPES["INT"]: lambda attr: attr.i,
-    ATTR_TYPES["STRING"]: lambda attr: attr.s,
+    ATTR_TYPES["STRING"]: lambda attr: attr.s.decode("utf-8"),
     ATTR_TYPES["TENSOR"]: lambda attr: numpy_helper.to_array(attr.t),
     ATTR_TYPES["FLOATS"]: lambda attr: attr.floats,
     ATTR_TYPES["INTS"]: lambda attr: tuple(attr.ints),
@@ -85,7 +106,8 @@ ATTR_GETTERS = {
 
 # pylint: enable=invalid-name
 
-# We are using opset 14 for ONNX export, implement the relevant revisions of the operators
+# We are using OPSET_VERSION_FOR_ONNX_EXPORT for ONNX export, implement the relevant revisions of
+# the operators
 ONNX_OPS_TO_NUMPY_IMPL: Dict[str, Callable[..., Tuple[numpy.ndarray, ...]]] = {
     "Add": numpy_add,
     "Clip": numpy_clip,
@@ -121,13 +143,57 @@ ONNX_OPS_TO_NUMPY_IMPL: Dict[str, Callable[..., Tuple[numpy.ndarray, ...]]] = {
     "Log": numpy_log,
     "Exp": numpy_exp,
     "Equal": numpy_equal,
-    "Not": numpy_not,
-    "Greater": numpy_greater,
     "Identity": numpy_identity,
     "Reshape": numpy_reshape,
-    "Less": numpy_less,
+    "Transpose": numpy_transpose,
     "Conv": torch_conv,
+    "PRelu": numpy_prelu,
+    "HardSwish": numpy_hardswish,
+    "AveragePool": torch_avgpool,
+    "Pad": numpy_pad,
+    "Where": numpy_where,
+    "Cast": numpy_cast,
+    "BatchNormalization": numpy_batchnorm,
+    "Flatten": numpy_flatten,
+    "Round": numpy_round,
+    "Pow": numpy_pow,
+    "ReduceSum": numpy_reduce_sum,
 }
+
+# Creating the following dictionaries was introduced following the performance regression issues
+# observed in https://github.com/zama-ai/concrete-ml-internal/issues/1357.
+# Comparison operators from numpy return boolean values, which is a specific subtype of numpy
+# integer types. However, the problem lies in the fact that while this is the expected behavior for
+# tree-based models, QuantizedOps only handle float values in order to properly quantize. The
+# current solution therefore dissociates the numpy operators used in both cases.
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+
+# Comparison operators needed for QuantizedOps as they cast the boolean outputs into floats.
+ONNX_COMPARISON_OPS_TO_NUMPY_IMPL_FLOAT: Dict[str, Callable[..., Tuple[numpy.ndarray, ...]]] = {
+    "Or": numpy_or_float,
+    "Not": numpy_not_float,
+    "Greater": numpy_greater_float,
+    "GreaterOrEqual": numpy_greater_or_equal_float,
+    "Less": numpy_less_float,
+    "LessOrEqual": numpy_less_or_equal_float,
+}
+
+# Comparison operators used in tree-based models as they keep the outputs' boolean dtype.
+ONNX_COMPARISON_OPS_TO_NUMPY_IMPL_BOOL: Dict[str, Callable[..., Tuple[numpy.ndarray, ...]]] = {
+    "Or": numpy_or,
+    "Not": numpy_not,
+    "Greater": numpy_greater,
+    "GreaterOrEqual": numpy_greater_or_equal,
+    "Less": numpy_less,
+    "LessOrEqual": numpy_less_or_equal,
+}
+
+# All numpy operators used in QuantizedOps
+ONNX_OPS_TO_NUMPY_IMPL.update(ONNX_COMPARISON_OPS_TO_NUMPY_IMPL_FLOAT)
+
+# All numpy operators used for tree-based models
+ONNX_OPS_TO_NUMPY_IMPL_BOOL = {**ONNX_OPS_TO_NUMPY_IMPL, **ONNX_COMPARISON_OPS_TO_NUMPY_IMPL_BOOL}
+
 
 IMPLEMENTED_ONNX_OPS = set(ONNX_OPS_TO_NUMPY_IMPL.keys())
 
@@ -145,7 +211,8 @@ def get_attribute(attribute: onnx.AttributeProto) -> Any:
 
 
 def execute_onnx_with_numpy(
-    graph: onnx.GraphProto, *inputs: numpy.ndarray
+    graph: onnx.GraphProto,
+    *inputs: numpy.ndarray,
 ) -> Tuple[numpy.ndarray, ...]:
     """Execute the provided ONNX graph on the given inputs.
 
@@ -166,6 +233,7 @@ def execute_onnx_with_numpy(
     for node in graph.node:
         curr_inputs = (node_results[input_name] for input_name in node.input)
         attributes = {attribute.name: get_attribute(attribute) for attribute in node.attribute}
-        outputs = ONNX_OPS_TO_NUMPY_IMPL[node.op_type](*curr_inputs, **attributes)
+        outputs = ONNX_OPS_TO_NUMPY_IMPL_BOOL[node.op_type](*curr_inputs, **attributes)
+
         node_results.update(zip(node.output, outputs))
     return tuple(node_results[output.name] for output in graph.output)

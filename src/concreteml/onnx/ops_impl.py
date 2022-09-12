@@ -1,16 +1,39 @@
 """ONNX ops implementation in python + numpy."""
 
-from typing import Optional, Tuple, Union
+# pylint: disable=too-many-lines
+from typing import Optional, Sequence, SupportsIndex, Tuple, Union
 
 import numpy
+import onnx
 import torch
+import torch.nn
+from concrete.numpy import univariate
 from scipy import special
 
 from ..common.debugging import assert_true
 
 
-def fake_numpy_where(c: numpy.ndarray, t: numpy.ndarray, f: numpy.ndarray) -> numpy.ndarray:
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+# This function is only used for comparison operators that return boolean values by default.
+def cast_to_float(inputs):
+    """Cast values to floating points.
+
+    Args:
+        inputs (Tuple[numpy.ndarray]): The values to consider.
+
+    Returns:
+        Tuple[numpy.ndarray]: The float values.
+    """
+    return tuple(map(lambda x: x.astype(numpy.float64), inputs))
+
+
+def numpy_where_body(
+    c: numpy.ndarray, t: numpy.ndarray, f: Union[numpy.ndarray, int], /
+) -> numpy.ndarray:
     """Compute the equivalent of numpy.where.
+
+    This function is not mapped to any ONNX operator (as opposed to numpy_where). It is usable by
+    functions which are mapped to ONNX operators, eg numpy_div or numpy_where.
 
     Args:
         c (numpy.ndarray): Condition operand.
@@ -23,7 +46,22 @@ def fake_numpy_where(c: numpy.ndarray, t: numpy.ndarray, f: numpy.ndarray) -> nu
     # FIXME: can it be improved with a native numpy.where in Concrete Numpy?
     # https://github.com/zama-ai/concrete-numpy-internal/issues/1429
     """
-    return c * t + (1 - c) * f
+    return c * t + (1.0 - c) * f
+
+
+def numpy_where(c: numpy.ndarray, t: numpy.ndarray, f: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute the equivalent of numpy.where.
+
+    Args:
+        c (numpy.ndarray): Condition operand.
+        t (numpy.ndarray): True operand.
+        f (numpy.ndarray): False operand.
+
+    Returns:
+        numpy.ndarray: numpy.where(c, t, f)
+
+    """
+    return (numpy_where_body(c, t, f),)
 
 
 def numpy_add(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
@@ -43,13 +81,13 @@ def numpy_add(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
 
 # input, min and max are python built-in but we need to match the ONNX naming, ignore the lint
 # pylint: disable=redefined-builtin
-def numpy_clip(input: numpy.ndarray, /, min=None, max=None) -> Tuple[numpy.ndarray]:
+def numpy_clip(a: numpy.ndarray, /, min=None, max=None) -> Tuple[numpy.ndarray]:
     """Compute clip in numpy according to ONNX spec.
 
     See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Clip-13
 
     Args:
-        input (numpy.ndarray): Input tensor whose elements to be clipped.
+        a (numpy.ndarray): Input tensor whose elements to be clipped.
         min ([type], optional): Minimum value, under which element is replaced by min.
             It must be a scalar(tensor of empty shape).
             Defaults to None.
@@ -67,7 +105,7 @@ def numpy_clip(input: numpy.ndarray, /, min=None, max=None) -> Tuple[numpy.ndarr
         "for the min or max inputs.",
     )
 
-    return (numpy.clip(input, min, max),)
+    return (numpy.clip(a, min, max),)
 
 
 # pylint: enable=redefined-builtin
@@ -389,8 +427,7 @@ def numpy_elu(x: numpy.ndarray, /, *, alpha: float = 1) -> Tuple[numpy.ndarray]:
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    y = fake_numpy_where(x > 0, x, alpha * (numpy.exp(x) - 1))
-    return (y,)
+    return numpy_where(x > 0, x, alpha * (numpy.exp(x) - 1))
 
 
 def numpy_selu(
@@ -413,8 +450,7 @@ def numpy_selu(
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    y = fake_numpy_where(x > 0, gamma * x, (gamma * alpha) * (numpy.exp(x) - 1))
-    return (y,)
+    return numpy_where(x > 0, gamma * x, (gamma * alpha) * (numpy.exp(x) - 1))
 
 
 def numpy_celu(x: numpy.ndarray, /, *, alpha: float = 1) -> Tuple[numpy.ndarray]:
@@ -446,8 +482,7 @@ def numpy_leakyrelu(x: numpy.ndarray, /, *, alpha: float = 0.01) -> Tuple[numpy.
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    y = fake_numpy_where(x > 0, x, alpha * x)
-    return (y,)
+    return numpy_where(x > 0, x, alpha * x)
 
 
 def numpy_thresholdedrelu(x: numpy.ndarray, /, *, alpha: float = 1) -> Tuple[numpy.ndarray]:
@@ -518,52 +553,57 @@ def numpy_abs(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
     return (numpy.abs(x),)
 
 
-def numpy_div(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+def numpy_div(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
     """Compute div in numpy according to ONNX spec.
 
     See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Div-14
 
     Args:
-        x (numpy.ndarray): Input tensor
-        y (numpy.ndarray): Input tensor
+        a (numpy.ndarray): Input tensor
+        b (numpy.ndarray): Input tensor
 
     Returns:
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    return (x / y,)
+    # FIXME: remove this once https://github.com/zama-ai/concrete-ml-internal/issues/857 is
+    # explained
+    bp = numpy_where_body(b != 0, b, 1)
+    ans = numpy.divide(a, bp)
+
+    return (ans,)
 
 
-def numpy_mul(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+def numpy_mul(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
     """Compute mul in numpy according to ONNX spec.
 
     See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Mul-14
 
     Args:
-        x (numpy.ndarray): Input tensor
-        y (numpy.ndarray): Input tensor
+        a (numpy.ndarray): Input tensor
+        b (numpy.ndarray): Input tensor
 
     Returns:
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    return (x * y,)
+    return (a * b,)
 
 
-def numpy_sub(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+def numpy_sub(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
     """Compute sub in numpy according to ONNX spec.
 
     See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Sub-14
 
     Args:
-        x (numpy.ndarray): Input tensor
-        y (numpy.ndarray): Input tensor
+        a (numpy.ndarray): Input tensor
+        b (numpy.ndarray): Input tensor
 
     Returns:
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    return (x - y,)
+    return (a - b,)
 
 
 def numpy_log(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
@@ -578,7 +618,29 @@ def numpy_log(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    return (numpy.log(x),)
+    # Epsilon is here to avoid problems with 0 or negative values, which may happen when Concrete
+    # Numpy creates the table (even if these problematic values would normally never be used)
+    epsilon = 10**-8
+
+    return (numpy.log(numpy.maximum(x, epsilon)),)
+
+
+def numpy_prelu(x: numpy.ndarray, slope: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute prelu in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#prelu-16
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        slope (numpy.ndarray): Slope of PRelu
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    a = numpy.minimum(0, slope * x)
+    b = numpy.maximum(0, x)
+    return (a + b,)
 
 
 def numpy_erf(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
@@ -593,7 +655,26 @@ def numpy_erf(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
         Tuple[numpy.ndarray]: Output tensor
     """
 
-    return (special.erf(x),)  # pylint: disable=no-member
+    return (univariate(special.erf)(x),)  # pylint: disable=no-member
+
+
+def numpy_hardswish(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute hardswitch in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#hardswish-14
+
+    Args:
+        x (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    alpha = 1.0 / 6
+    beta = 0.5
+    r = x * numpy.maximum(0, numpy.minimum(1, alpha * x + beta))
+
+    return (r,)
 
 
 def numpy_exp(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
@@ -642,6 +723,22 @@ def numpy_not(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
     return (numpy.logical_not(x),)
 
 
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+def numpy_not_float(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute not in numpy according to ONNX spec and cast outputs to floats.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Not-1
+
+    Args:
+        x (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return cast_to_float(numpy_not(x))
+
+
 def numpy_greater(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
     """Compute greater in numpy according to ONNX spec.
 
@@ -656,6 +753,122 @@ def numpy_greater(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]
     """
 
     return (numpy.greater(x, y),)
+
+
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+def numpy_greater_float(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute greater in numpy according to ONNX spec and cast outputs to floats.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Greater-13
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return cast_to_float(numpy_greater(x, y))
+
+
+def numpy_greater_or_equal(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute greater or equal in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#GreaterOrEqual-12
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return (numpy.greater_equal(x, y),)
+
+
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+def numpy_greater_or_equal_float(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute greater or equal in numpy according to ONNX specs and cast outputs to floats.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#GreaterOrEqual-12
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return cast_to_float(numpy_greater_or_equal(x, y))
+
+
+def numpy_less(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute less in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Less-13
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return (numpy.less(x, y),)
+
+
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+def numpy_less_float(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute less in numpy according to ONNX spec and cast outputs to floats.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Less-13
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return cast_to_float(numpy_less(x, y))
+
+
+def numpy_less_or_equal(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute less or equal in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#LessOrEqual-12
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return (numpy.less_equal(x, y),)
+
+
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+def numpy_less_or_equal_float(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute less or equal in numpy according to ONNX spec and cast outputs to floats.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#LessOrEqual-12
+
+    Args:
+        x (numpy.ndarray): Input tensor
+        y (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+
+    return cast_to_float(numpy_less_or_equal(x, y))
 
 
 def numpy_identity(x: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
@@ -690,22 +903,25 @@ def numpy_reshape(
     """
     assert_true(allowzero == 0, "Concrete ML currently only accepts numpy style reshape in ONNX")
 
-    return (numpy.reshape(x, newshape),)
+    # FIXME: Remove this cast when #1141 is fixed.
+    # (https://github.com/zama-ai/concrete-ml-internal/issues/1141)
+    return (numpy.reshape(x, newshape.astype(numpy.int64)),)
 
 
-def numpy_less(x: numpy.ndarray, y: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
-    """Compute less in numpy according to ONNX spec.
+def numpy_transpose(x: numpy.ndarray, /, *, perm=None) -> Tuple[numpy.ndarray]:
+    """Transpose in numpy according to ONNX spec.
 
-    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Less-13
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Transpose-13
 
     Args:
         x (numpy.ndarray): Input tensor
-        y (numpy.ndarray): Input tensor
+        perm (numpy.ndarray): Permutation of the axes
 
     Returns:
         Tuple[numpy.ndarray]: Output tensor
     """
-    return (numpy.less(x, y),)
+    # FIXME: #931, remove the no-cover once #931 is done
+    return (numpy.transpose(x, axes=perm),)  # pragma: no cover
 
 
 def torch_conv(
@@ -719,10 +935,12 @@ def torch_conv(
     kernel_shape: Tuple[int, ...],
     pads: Tuple[int, ...],
     strides: Tuple[int, ...],
-):
+) -> Tuple[numpy.ndarray]:
     """Compute N-D convolution using Torch.
 
     Currently supports 2d convolution with torch semantics. This function is also ONNX compatible.
+
+    See: https://github.com/onnx/onnx/blob/main/docs/Operators.md#Conv
 
     Args:
         x (numpy.ndarray): input data (many dtypes are supported). Shape is N x C x H x W for 2d
@@ -743,9 +961,9 @@ def torch_conv(
     """
 
     # Convert the inputs to tensors to compute conv using torch
-    tx = torch.Tensor(x)
-    tw = torch.Tensor(w)
-    tb = torch.Tensor(b.squeeze()) if b is not None else None
+    tx = torch.Tensor(x.copy())
+    tw = torch.Tensor(w.copy())
+    tb = torch.Tensor(b.squeeze().copy()) if b is not None else None
 
     assert_true(len(kernel_shape) == 2, "The convolution operator currently supports only 2-d")
     assert_true(
@@ -769,3 +987,312 @@ def torch_conv(
     res = torch.conv2d(tx, tw, tb, strides, torch_pads, dilations, group).numpy()
 
     return (res,)
+
+
+def torch_avgpool(
+    x: numpy.ndarray,
+    /,
+    *,
+    ceil_mode: int,
+    kernel_shape: Tuple[int, ...],
+    pads: Tuple[int, ...],
+    strides: Tuple[int, ...],
+) -> Tuple[numpy.ndarray]:
+    """Compute Average Pooling using Torch.
+
+    Currently supports 2d average pooling with torch semantics. This function is ONNX compatible.
+
+    See: https://github.com/onnx/onnx/blob/main/docs/Operators.md#AveragePool
+
+    Args:
+        x (numpy.ndarray): input data (many dtypes are supported). Shape is N x C x H x W for 2d
+        ceil_mode (int): ONNX rounding parameter, expected 0 (torch style dimension computation)
+        kernel_shape (Tuple[int]): shape of the kernel. Should have 2 elements for 2d conv
+        pads (Tuple[int]): padding in ONNX format (begin, end) on each axis
+        strides (Tuple[int]): stride of the convolution on each axis
+
+    Returns:
+        res (numpy.ndarray): a tensor of size (N x InChannels x OutHeight x OutWidth).
+           See https://pytorch.org/docs/stable/generated/torch.nn.AvgPool2d.html
+
+    Raises:
+        AssertionError: if the pooling arguments are wrong
+    """
+
+    # Convert the inputs to tensors to compute conv using torch
+    tx = torch.Tensor(x.copy())
+
+    assert_true(len(kernel_shape) == 2, "The convolution operator currently supports only 2-d")
+    assert_true(ceil_mode == 0, "Average Pooling only supports torch style dimension computation")
+    # For mypy
+    assert len(pads) == 4
+
+    # For mypy
+    assert len(kernel_shape) == 2
+
+    assert len(strides) == 2
+
+    assert_true(
+        pads[0] == pads[1] and pads[2] == pads[3],
+        "The convolution operator in Concrete ML only supports symmetric padding",
+    )
+
+    # Extract the 'begin' pads for all dimensions. Begin padding should be the same as the end pad
+    torch_pads = (pads[0], pads[1])
+
+    # Compute the torch convolution
+    res = torch.nn.functional.avg_pool2d(
+        tx, kernel_shape, strides, torch_pads, ceil_mode=False, count_include_pad=True
+    ).numpy()
+    return (res,)
+
+
+def numpy_pad(
+    data: numpy.ndarray,
+    pads: numpy.ndarray,
+    constant_value: Union[numpy.ndarray, None] = None,
+    /,
+    *,
+    mode: str,
+) -> Tuple[numpy.ndarray]:
+    """Apply padding in numpy according to ONNX spec.
+
+    See: https://github.com/onnx/onnx/blob/main/docs/Operators.md#Pad
+
+    Args:
+        data (numpy.ndarray): Input variable/tensor to pad
+        pads (numpy.ndarray): List of pads (size 8) to apply, two per N,C,H,W dimension
+        constant_value (float): Constant value to use for padding
+        mode (str): padding mode: constant/edge/reflect
+
+    Returns:
+        res (numpy.ndarray): Padded tensor
+    """
+
+    assert_true(bool(numpy.all(pads == 0)), "Padding operator supported only with all pads at zero")
+    assert_true(mode == "constant", "Padding only supported with a constant pad value")
+    assert_true(
+        constant_value is None or constant_value == 0, "Pad only accepts a constant padding with 0s"
+    )
+
+    return (data,)
+
+
+def numpy_cast(data: numpy.ndarray, /, *, to: int) -> Tuple[numpy.ndarray]:
+    """Execute ONNX cast in Numpy.
+
+    Supports only booleans for now, which are converted to integers.
+
+    See: https://github.com/onnx/onnx/blob/main/docs/Operators.md#Cast
+
+    Args:
+        data (numpy.ndarray): Input encrypted tensor
+        to (int): integer value of the onnx.TensorProto DataType enum
+
+    Returns:
+        result (numpy.ndarray): a tensor with the required data type
+    """
+    assert_true(to == onnx.TensorProto.BOOL)
+    return (data.astype(numpy.float64),)
+
+
+def numpy_batchnorm(
+    x: numpy.ndarray,
+    scale: numpy.ndarray,
+    bias: numpy.ndarray,
+    input_mean: numpy.ndarray,
+    input_var: numpy.ndarray,
+    /,
+    *,
+    epsilon=1e-05,
+    momentum=0.9,  # pylint: disable=unused-argument
+    training_mode=0,
+) -> Tuple[numpy.ndarray]:
+    """Compute the batch normalization of the input tensor.
+
+    This can be expressed as:
+
+    Y = (X - input_mean) / sqrt(input_var + epsilon) * scale + B
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#BatchNormalization-14
+
+    Args:
+        x (numpy.ndarray): tensor to normalize, dimensions are in the form of (N,C,D1,D2,...,Dn),
+                           where N is the batch size, C is the number of channels.
+        scale (numpy.ndarray): scale tensor of shape (C,)
+        bias (numpy.ndarray): bias tensor of shape (C,)
+        input_mean (numpy.ndarray): mean values to use for each input channel, shape (C,)
+        input_var (numpy.ndarray): variance values to use for each input channel, shape (C,)
+        epsilon (float): avoids division by zero
+        momentum (float): momentum used during training of the mean/variance, not used in inference
+        training_mode (int): if the model was exported in training mode this is set to 1, else 0
+
+    Returns:
+        numpy.ndarray: Normalized tensor
+    """
+
+    assert_true(
+        training_mode == 0,
+        "Model was exported with BatchNorm in training mode, this is not supported",
+    )
+
+    assert_true(
+        x.shape[1] == input_mean.shape[0],
+        "Number of channels in BatchNorm mean does not match input",
+    )
+
+    assert_true(
+        x.shape[1] == scale.shape[0],
+        "Number of channels in BatchNorm scale does not match input",
+    )
+
+    assert_true(
+        x.shape[1] == input_var.shape[0],
+        "Number of channels in BatchNorm variance does not match input",
+    )
+
+    assert_true(
+        x.shape[1] == bias.shape[0],
+        "Number of channels in BatchNorm bias does not match input",
+    )
+
+    shape_input = numpy.ones_like(x.shape)
+    shape_input[1] = x.shape[1]
+
+    input_mean = input_mean.reshape(shape_input)
+    input_var = input_var.reshape(shape_input)
+    scale = scale.reshape(shape_input)
+    bias = bias.reshape(shape_input)
+
+    y = (x - input_mean) / numpy.sqrt(input_var + epsilon) * scale + bias
+    return (y,)
+
+
+def numpy_flatten(x: numpy.ndarray, /, *, axis: int = 1) -> Tuple[numpy.ndarray]:
+    """Flatten a tensor into a 2d array.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Flatten-13.
+
+    Args:
+        x (numpy.ndarray): tensor to flatten
+        axis (int): axis after which all dimensions will be flattened (axis=0 gives a 1D output)
+
+    Returns:
+        result: flattened tensor
+    """
+    output_shape: Sequence[SupportsIndex]
+    output_shape = (*x.shape[0:axis], numpy.prod(x.shape[axis:]))
+
+    return (numpy.reshape(x, output_shape),)
+
+
+def numpy_or(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute or in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Or-7
+
+    Args:
+        a (numpy.ndarray): Input tensor
+        b (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+    return (numpy.logical_or(a, b),)
+
+
+# FIXME: to remove once https://github.com/zama-ai/concrete-ml-internal/issues/1117 is done.
+def numpy_or_float(a: numpy.ndarray, b: numpy.ndarray, /) -> Tuple[numpy.ndarray]:
+    """Compute or in numpy according to ONNX spec and cast outputs to floats.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Or-7
+
+    Args:
+        a (numpy.ndarray): Input tensor
+        b (numpy.ndarray): Input tensor
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor
+    """
+    return cast_to_float(numpy_or(a, b))
+
+
+def numpy_round(a: numpy.ndarray) -> Tuple[numpy.ndarray]:
+    """Compute round in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Round-11
+    Remark that ONNX Round operator is actually a rint, since the number of decimals is forced to
+    be 0
+
+    Args:
+        a (numpy.ndarray): Input tensor whose elements to be rounded.
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor with rounded input elements.
+    """
+
+    return (numpy.rint(a),)
+
+
+def numpy_pow(a: numpy.ndarray, b: numpy.ndarray) -> Tuple[numpy.ndarray]:
+    """Compute pow in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Pow-13
+
+    Args:
+        a (numpy.ndarray): Input tensor whose elements to be raised.
+        b (numpy.ndarray): The power to which we want to raise.
+
+    Returns:
+        Tuple[numpy.ndarray]: Output tensor.
+    """
+
+    return (numpy.power(a, b),)
+
+
+# pylint: disable=unused-argument
+def numpy_reduce_sum(
+    a: numpy.ndarray,
+    /,
+    axes: Optional[numpy.ndarray] = None,
+    *,
+    keepdims: int = 1,
+    noop_with_empty_axes: int = 0,
+) -> Tuple[numpy.ndarray]:
+    """Compute ReduceSum in numpy according to ONNX spec.
+
+    See https://github.com/onnx/onnx/blob/main/docs/Operators.md#ReduceSum
+
+    Args:
+        a (numpy.ndarray): Input tensor whose elements to sum.
+        axes (Optional[numpy.ndarray]): Array of integers along which to reduce. The default is to
+            reduce over all the dimensions of the input tensor if 'noop_with_empty_axes' is false,
+            else act as an Identity op when 'noop_with_empty_axes' is true. Accepted range is
+            [-r, r-1] where r = rank(data). Default to None.
+        keepdims (int): Keep the reduced dimension or not, 1 means keeping the
+            input dimension, 0 will reduce it along the given axis. Default to 1.
+        noop_with_empty_axes (int): Defines behaviour if 'axes' is empty or set to None.
+            Default behaviour with 0 is to reduce all axes. When axes is empty and this
+            attribute is set to true 1, input tensor will not be reduced, and the output
+            tensor would be equivalent to input tensor. Default to 0.
+
+    Returns:
+        numpy.ndarray: Output reduced tensor.
+    """
+
+    assert_true(
+        axes is not None and len(axes.shape) == 1 and axes[0] == 1,
+        "ReduceSum currently only handles summing over axis 1.",
+    )
+
+    assert_true(len(a.shape) == 2, "ReduceSum currently only handles arrays of 2 dimensions")
+
+    assert_true(keepdims == 0, "ReduceSum currently only outputs reduced dimension tensors.")
+
+    n_values = a.shape[1]
+    assert_true(
+        (n_values != 0) and (n_values & (n_values - 1) == 0),
+        "ReduceSum currently only handles N values with N a power of 2.",
+    )
+
+    return (numpy.sum(a, axis=1, keepdims=False),)
