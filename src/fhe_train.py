@@ -292,13 +292,11 @@ def get_compiled_circuit_with_test_data():
     fhe_cfg_simu = Configuration(
         dump_artifacts_on_unexpected_failures=False,
         enable_unsafe_features=True,  # This is for our tests only, never use that in prod
-        treat_warnings_as_errors=True,
         use_insecure_key_cache=False,
     )
 
     # fhe_cfg_prod = Configuration(
     #     dump_artifacts_on_unexpected_failures=False,
-    #     treat_warnings_as_errors=True,
     #     use_insecure_key_cache=False,
     # )
 
