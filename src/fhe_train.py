@@ -30,7 +30,7 @@ from torch.nn.utils import prune
 from torch.utils.data import DataLoader
 from torchsummary import summary
 
-from concrete.common.compilation import CompilationConfiguration
+from concrete.numpy.compilation import Configuration
 from concreteml.torch.compile import compile_torch_model
 
 LABELS_MAP = {0: "Abdomen", 1: "Breast", 2: "Chest X-Ray", 3: "Chest computed tomography", 4: "Hand", 5: "Head"}
@@ -289,14 +289,14 @@ def get_compiled_circuit_with_test_data():
         print("Model detected on disk, model loaded.")
 
 
-    fhe_cfg_simu = CompilationConfiguration(
+    fhe_cfg_simu = Configuration(
         dump_artifacts_on_unexpected_failures=False,
         enable_unsafe_features=True,  # This is for our tests only, never use that in prod
         treat_warnings_as_errors=True,
         use_insecure_key_cache=False,
     )
 
-    # fhe_cfg_prod = CompilationConfiguration(
+    # fhe_cfg_prod = Configuration(
     #     dump_artifacts_on_unexpected_failures=False,
     #     treat_warnings_as_errors=True,
     #     use_insecure_key_cache=False,
