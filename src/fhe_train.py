@@ -310,7 +310,7 @@ def get_compiled_circuit_with_test_data():
                 torch.cat([img.to("cpu") for img, _ in train_loader],0)[0:200], # concatenate a part of the training set into one tensor as Tensor tuple is not yet supported.
                 n_bits=n_bit,
                 use_virtual_lib=True,
-                compilation_configuration=fhe_cfg_simu,
+                configuration=fhe_cfg_simu,
             )
             print(f"Compiled FHE friendly torch model for {n_bit} quantization bits in {time.time() - start_time} seconds") # ~20min : AMD Ryzen Threadripper 2920X - 12 cores, 24 threads + 32 Gb RAM 
             break
@@ -321,8 +321,8 @@ def get_compiled_circuit_with_test_data():
             raise e
 
 
-    path = q_module_vl.forward_fhe.draw()
-    print(f"FHECircuit graph generated at {path}")
+    #path = q_module_vl.forward_fhe.draw()
+    #print(f"FHECircuit graph generated at {path}")
     
     # FHE module serialization is not supported yet.
     # Although I tried to make it work, I'm facing serialization issues
